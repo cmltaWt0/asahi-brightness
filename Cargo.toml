@@ -1,0 +1,28 @@
+[package]
+name = "asahi-brightness"
+version = "0.1.0"
+edition = "2021"
+description = "Auto-brightness daemon for Apple Silicon ALS on Linux. Compositor-agnostic; controls display + keyboard backlight."
+license = "MIT"
+
+[[bin]]
+name = "asahi-brightness"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "net", "signal", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+xdg = "2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

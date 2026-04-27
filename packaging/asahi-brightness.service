@@ -1,0 +1,15 @@
+[Unit]
+Description=Asahi auto-brightness daemon (display + keyboard)
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/asahi-brightness run
+Restart=on-failure
+RestartSec=2
+# RUST_LOG can be tuned to debug for verbose tracing.
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=graphical-session.target
