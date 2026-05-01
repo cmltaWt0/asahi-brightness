@@ -46,11 +46,7 @@ pub fn spawn(timeout_ms: u32) -> Result<mpsc::UnboundedReceiver<IdleEvent>> {
     Ok(rx)
 }
 
-fn run_loop(
-    conn: Connection,
-    tx: mpsc::UnboundedSender<IdleEvent>,
-    timeout_ms: u32,
-) -> Result<()> {
+fn run_loop(conn: Connection, tx: mpsc::UnboundedSender<IdleEvent>, timeout_ms: u32) -> Result<()> {
     let display = conn.display();
     let mut event_queue: EventQueue<State> = conn.new_event_queue();
     let queue_handle = event_queue.handle();
