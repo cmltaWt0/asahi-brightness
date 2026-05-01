@@ -1,5 +1,5 @@
 bin := "asahi-brightness"
-dst := env_var('HOME') / ".local/bin" / bin
+dst := env('HOME') / ".local/bin" / bin
 unit := "asahi-brightness.service"
 
 # Show available recipes.

@@ -20,7 +20,8 @@ pub struct StatusReply {
     pub display_pct: Option<f32>,
     pub keyboard_pct: Option<f32>,
     pub paused_until_unix: Option<u64>,
-    pub override_active: bool,
+    pub display_override_active: bool,
+    pub keyboard_override_active: bool,
     pub idle: bool,
     pub nudge_pct: i32,
 }
@@ -63,8 +64,8 @@ pub mod server {
             let (stream, _) = listener.accept().await?;
             let tx = tx.clone();
             tokio::spawn(async move {
-                if let Err(e) = handle(stream, tx).await {
-                    tracing::warn!(error = %e, "IPC client error");
+                if let Err(err) = handle(stream, tx).await {
+                    tracing::warn!(error = %err, "IPC client error");
                 }
             });
         }
@@ -74,21 +75,21 @@ pub mod server {
         let (reader, mut writer) = stream.into_split();
         let mut lines = BufReader::new(reader).lines();
         while let Some(line) = lines.next_line().await? {
-            let req: Request = match serde_json::from_str(&line) {
-                Ok(r) => r,
-                Err(e) => {
-                    write_reply(&mut writer, Reply::Error(format!("bad request: {e}"))).await?;
+            let request: Request = match serde_json::from_str(&line) {
+                Ok(parsed) => parsed,
+                Err(err) => {
+                    write_reply(&mut writer, Reply::Error(format!("bad request: {err}"))).await?;
                     continue;
                 }
             };
-            let reply = match req {
+            let reply = match request {
                 Request::Status => {
-                    let (s, r) = oneshot::channel();
-                    if tx.send(Command::GetStatus(s)).await.is_err() {
+                    let (oneshot_tx, oneshot_rx) = oneshot::channel();
+                    if tx.send(Command::GetStatus(oneshot_tx)).await.is_err() {
                         Reply::Error("daemon channel closed".into())
                     } else {
-                        match r.await {
-                            Ok(st) => Reply::Status(st),
+                        match oneshot_rx.await {
+                            Ok(status) => Reply::Status(status),
                             Err(_) => Reply::Error("daemon dropped status request".into()),
                         }
                     }
@@ -111,10 +112,13 @@ pub mod server {
         Ok(())
     }
 
-    async fn write_reply<W: AsyncWriteExt + Unpin>(w: &mut W, reply: Reply) -> Result<()> {
-        let mut s = serde_json::to_string(&reply)?;
-        s.push('\n');
-        w.write_all(s.as_bytes()).await?;
+    async fn write_reply<Writer: AsyncWriteExt + Unpin>(
+        writer: &mut Writer,
+        reply: Reply,
+    ) -> Result<()> {
+        let mut body = serde_json::to_string(&reply)?;
+        body.push('\n');
+        writer.write_all(body.as_bytes()).await?;
         Ok(())
     }
 }
@@ -122,30 +126,30 @@ pub mod server {
 pub mod client {
     use super::*;
 
-    async fn round_trip(req: Request) -> Result<Reply> {
+    async fn round_trip(request: Request) -> Result<Reply> {
         let path = socket_path()?;
         let mut stream = UnixStream::connect(&path)
             .await
             .with_context(|| format!("connecting {}. Is the daemon running?", path.display()))?;
-        let mut line = serde_json::to_string(&req)?;
+        let mut line = serde_json::to_string(&request)?;
         line.push('\n');
         stream.write_all(line.as_bytes()).await?;
-        let (reader, _w) = stream.split();
+        let (reader, _writer) = stream.split();
         let mut lines = BufReader::new(reader).lines();
-        let resp = lines
+        let response = lines
             .next_line()
             .await?
             .ok_or_else(|| anyhow::anyhow!("daemon closed connection without reply"))?;
-        Ok(serde_json::from_str(&resp)?)
+        Ok(serde_json::from_str(&response)?)
     }
 
     pub async fn status() -> Result<()> {
         match round_trip(Request::Status).await? {
-            Reply::Status(s) => {
-                println!("{}", serde_json::to_string_pretty(&s)?);
+            Reply::Status(status) => {
+                println!("{}", serde_json::to_string_pretty(&status)?);
                 Ok(())
             }
-            Reply::Error(e) => Err(anyhow::anyhow!(e)),
+            Reply::Error(msg) => Err(anyhow::anyhow!(msg)),
             Reply::Ok => Err(anyhow::anyhow!("unexpected Ok reply to Status")),
         }
     }
@@ -165,7 +169,7 @@ pub mod client {
     fn expect_ok(reply: Reply) -> Result<()> {
         match reply {
             Reply::Ok => Ok(()),
-            Reply::Error(e) => Err(anyhow::anyhow!(e)),
+            Reply::Error(msg) => Err(anyhow::anyhow!(msg)),
             Reply::Status(_) => Err(anyhow::anyhow!("unexpected Status reply")),
         }
     }

@@ -40,11 +40,11 @@ impl Backlight {
         let probe = std::fs::OpenOptions::new()
             .write(true)
             .open(&brightness_path);
-        if let Err(e) = probe {
+        if let Err(err) = probe {
             anyhow::bail!(
                 "{} not writable ({}). Install the udev rule and ensure your user is in 'video'.",
                 brightness_path.display(),
-                e
+                err
             );
         }
 
@@ -56,8 +56,8 @@ impl Backlight {
     }
 
     pub fn read_raw(&self) -> Result<u32> {
-        let s = std::fs::read_to_string(&self.brightness_path)?;
-        Ok(s.trim().parse::<u32>()?)
+        let raw_text = std::fs::read_to_string(&self.brightness_path)?;
+        Ok(raw_text.trim().parse::<u32>()?)
     }
 
     /// Adopt the current sysfs value as our last-written baseline, so the next
@@ -78,15 +78,15 @@ impl Backlight {
         let Some(last) = self.last_written else {
             return Ok(false);
         };
-        let cur = self.read_raw()?;
-        Ok(cur.abs_diff(last) > 1)
+        let current = self.read_raw()?;
+        Ok(current.abs_diff(last) > 1)
     }
 
     pub fn write_raw(&mut self, value: u32) -> Result<()> {
-        let v = value.min(self.max);
-        std::fs::write(&self.brightness_path, v.to_string())
+        let clamped = value.min(self.max);
+        std::fs::write(&self.brightness_path, clamped.to_string())
             .with_context(|| format!("writing {}", self.brightness_path.display()))?;
-        self.last_written = Some(v);
+        self.last_written = Some(clamped);
         Ok(())
     }
 
@@ -103,18 +103,24 @@ impl Backlight {
         let step_dur = duration
             .checked_div(steps)
             .unwrap_or(Duration::from_millis(10));
-        for v in path {
-            self.write_raw(v)?;
+        for raw_value in path {
+            self.write_raw(raw_value)?;
             tokio::time::sleep(step_dur).await;
         }
         Ok(())
     }
 }
 
+/*
+ * Converts a raw brightness value (0..max) to a percentage (0.0..100.0).
+ */
 pub fn raw_to_pct(raw: u32, max: u32) -> f32 {
     (raw as f32 / max as f32) * 100.0
 }
 
+/*
+ * Converts a percentage (0.0..100.0) to a raw brightness value (0..max).
+ */
 pub fn pct_to_raw(pct: f32, max: u32) -> u32 {
     let clamped = pct.clamp(0.0, 100.0);
     ((clamped / 100.0) * max as f32).round() as u32
