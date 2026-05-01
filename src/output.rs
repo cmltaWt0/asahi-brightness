@@ -111,16 +111,12 @@ impl Backlight {
     }
 }
 
-/*
- * Converts a raw brightness value (0..max) to a percentage (0.0..100.0).
- */
+/// Converts a raw brightness value (0..max) to a percentage (0.0..100.0).
 pub fn raw_to_pct(raw: u32, max: u32) -> f32 {
     (raw as f32 / max as f32) * 100.0
 }
 
-/*
- * Converts a percentage (0.0..100.0) to a raw brightness value (0..max).
- */
+/// Converts a percentage (0.0..100.0) to a raw brightness value (0..max).
 pub fn pct_to_raw(pct: f32, max: u32) -> u32 {
     let clamped = pct.clamp(0.0, 100.0);
     ((clamped / 100.0) * max as f32).round() as u32
