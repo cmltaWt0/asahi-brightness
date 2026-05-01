@@ -44,8 +44,8 @@ impl Sensor {
     }
 
     fn read_raw(path: &Path) -> Result<f32> {
-        let s = std::fs::read_to_string(path)?;
-        Ok(s.trim().parse::<f32>()?)
+        let content = std::fs::read_to_string(path)?;
+        Ok(content.trim().parse::<f32>()?)
     }
 
     fn step(&mut self) -> Result<f32> {
@@ -74,10 +74,10 @@ impl Sensor {
                         Ok(smoothed) => {
                             let _ = tx.send(LuxSample { raw, smoothed });
                         }
-                        Err(e) => tracing::warn!(error = %e, "ALS smoothing failed"),
+                        Err(err) => tracing::warn!(error = %err, "ALS smoothing failed"),
                     },
-                    Err(e) => {
-                        tracing::warn!(error = %e, "ALS read failed");
+                    Err(err) => {
+                        tracing::warn!(error = %err, "ALS read failed");
                     }
                 }
             }

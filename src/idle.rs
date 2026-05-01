@@ -30,16 +30,16 @@ struct State {
 }
 
 pub fn spawn(timeout_ms: u32) -> Result<mpsc::UnboundedReceiver<IdleEvent>> {
-    let conn = Connection::connect_to_env().map_err(|e| {
-        anyhow!("connect to wayland display failed: {e}. Idle integration disabled.")
+    let conn = Connection::connect_to_env().map_err(|err| {
+        anyhow!("connect to wayland display failed: {err}. Idle integration disabled.")
     })?;
     let (tx, rx) = mpsc::unbounded_channel();
 
     std::thread::Builder::new()
         .name("wayland-idle".into())
         .spawn(move || {
-            if let Err(e) = run_loop(conn, tx, timeout_ms) {
-                tracing::warn!(error = %e, "Wayland idle loop exited");
+            if let Err(err) = run_loop(conn, tx, timeout_ms) {
+                tracing::warn!(error = %err, "Wayland idle loop exited");
             }
         })?;
 
@@ -49,9 +49,9 @@ pub fn spawn(timeout_ms: u32) -> Result<mpsc::UnboundedReceiver<IdleEvent>> {
 fn run_loop(conn: Connection, tx: mpsc::UnboundedSender<IdleEvent>, timeout_ms: u32) -> Result<()> {
     let display = conn.display();
     let mut event_queue: EventQueue<State> = conn.new_event_queue();
-    let qh = event_queue.handle();
+    let queue_handle = event_queue.handle();
 
-    let _registry = display.get_registry(&qh, ());
+    let _registry = display.get_registry(&queue_handle, ());
 
     let state = Arc::new(Mutex::new(State {
         notifier: None,
@@ -62,16 +62,19 @@ fn run_loop(conn: Connection, tx: mpsc::UnboundedSender<IdleEvent>, timeout_ms: 
     }));
 
     // Initial roundtrip to populate globals.
-    let mut s = state.lock().unwrap();
-    event_queue.roundtrip(&mut s)?;
-    drop(s);
+    let mut state_guard = state.lock().unwrap();
+    event_queue.roundtrip(&mut state_guard)?;
+    drop(state_guard);
 
     // After registry binds, set up notification.
     {
-        let mut s = state.lock().unwrap();
-        if let (Some(notifier), Some(seat)) = (s.notifier.clone(), s.seat.clone()) {
-            let n = notifier.get_idle_notification(s.timeout_ms, &seat, &qh, ());
-            s.notification = Some(n);
+        let mut state_guard = state.lock().unwrap();
+        if let (Some(notifier), Some(seat)) =
+            (state_guard.notifier.clone(), state_guard.seat.clone())
+        {
+            let notification_handle =
+                notifier.get_idle_notification(state_guard.timeout_ms, &seat, &queue_handle, ());
+            state_guard.notification = Some(notification_handle);
         } else {
             anyhow::bail!(
                 "compositor does not advertise ext-idle-notify-v1; idle integration disabled"
@@ -80,8 +83,8 @@ fn run_loop(conn: Connection, tx: mpsc::UnboundedSender<IdleEvent>, timeout_ms: 
     }
 
     loop {
-        let mut s = state.lock().unwrap();
-        event_queue.blocking_dispatch(&mut s)?;
+        let mut state_guard = state.lock().unwrap();
+        event_queue.blocking_dispatch(&mut state_guard)?;
     }
 }
 
@@ -92,7 +95,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
         event: wl_registry::Event,
         _: &(),
         _: &Connection,
-        qh: &QueueHandle<Self>,
+        queue_handle: &QueueHandle<Self>,
     ) {
         if let wl_registry::Event::Global {
             name,
@@ -105,14 +108,18 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     let seat = registry.bind::<wayland_client::protocol::wl_seat::WlSeat, _, _>(
                         name,
                         version.min(7),
-                        qh,
+                        queue_handle,
                         (),
                     );
                     state.seat = Some(seat);
                 }
                 "ext_idle_notifier_v1" => {
-                    let notifier =
-                        registry.bind::<ExtIdleNotifierV1, _, _>(name, version.min(1), qh, ());
+                    let notifier = registry.bind::<ExtIdleNotifierV1, _, _>(
+                        name,
+                        version.min(1),
+                        queue_handle,
+                        (),
+                    );
                     state.notifier = Some(notifier);
                 }
                 _ => {}

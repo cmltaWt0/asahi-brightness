@@ -106,15 +106,22 @@ pub fn default_path() -> Result<PathBuf> {
 
 impl Config {
     fn validate(&self) -> Result<()> {
-        for ch in [&self.display, &self.keyboard] {
-            if !ch.enabled {
+        for channel in [&self.display, &self.keyboard] {
+            if !channel.enabled {
                 continue;
             }
-            anyhow::ensure!(!ch.curve.is_empty(), "curve for {} is empty", ch.device);
             anyhow::ensure!(
-                ch.curve.windows(2).all(|w| w[0][0] <= w[1][0]),
+                !channel.curve.is_empty(),
+                "curve for {} is empty",
+                channel.device
+            );
+            anyhow::ensure!(
+                channel
+                    .curve
+                    .windows(2)
+                    .all(|segment| segment[0][0] <= segment[1][0]),
                 "curve for {} must be sorted by lux ascending",
-                ch.device
+                channel.device
             );
         }
         anyhow::ensure!(

@@ -15,17 +15,17 @@ pub fn target_pct(channel: &Channel, lux: f32) -> f32 {
     if lux >= curve[curve.len() - 1][0] {
         return curve[curve.len() - 1][1];
     }
-    for w in curve.windows(2) {
-        let (x0, y0) = (w[0][0], w[0][1]);
-        let (x1, y1) = (w[1][0], w[1][1]);
-        if lux >= x0 && lux <= x1 {
-            let t = if x1 == x0 {
+    for segment in curve.windows(2) {
+        let (lux_lo, pct_lo) = (segment[0][0], segment[0][1]);
+        let (lux_hi, pct_hi) = (segment[1][0], segment[1][1]);
+        if lux >= lux_lo && lux <= lux_hi {
+            let frac = if lux_hi == lux_lo {
                 0.0
             } else {
-                (lux - x0) / (x1 - x0)
+                (lux - lux_lo) / (lux_hi - lux_lo)
             };
-            let y = y0 + t * (y1 - y0);
-            return y.max(channel.min_pct);
+            let pct = pct_lo + frac * (pct_hi - pct_lo);
+            return pct.max(channel.min_pct);
         }
     }
     channel.min_pct
@@ -36,7 +36,7 @@ mod tests {
     use super::*;
     use crate::config::Channel;
 
-    fn ch(curve: Vec<[f32; 2]>, cutoff: Option<f32>, min: f32) -> Channel {
+    fn make_channel(curve: Vec<[f32; 2]>, cutoff: Option<f32>, min: f32) -> Channel {
         Channel {
             enabled: true,
             device: "test".into(),
@@ -50,27 +50,27 @@ mod tests {
 
     #[test]
     fn interpolates_midpoint() {
-        let c = ch(vec![[0.0, 0.0], [100.0, 100.0]], None, 0.0);
-        assert!((target_pct(&c, 50.0) - 50.0).abs() < 1e-3);
+        let channel = make_channel(vec![[0.0, 0.0], [100.0, 100.0]], None, 0.0);
+        assert!((target_pct(&channel, 50.0) - 50.0).abs() < 1e-3);
     }
 
     #[test]
     fn clamps_min_pct() {
-        let c = ch(vec![[0.0, 0.0], [100.0, 100.0]], None, 5.0);
-        assert!((target_pct(&c, 0.0) - 5.0).abs() < 1e-3);
+        let channel = make_channel(vec![[0.0, 0.0], [100.0, 100.0]], None, 5.0);
+        assert!((target_pct(&channel, 0.0) - 5.0).abs() < 1e-3);
     }
 
     #[test]
     fn applies_cutoff() {
-        let c = ch(vec![[0.0, 50.0], [100.0, 50.0]], Some(150.0), 0.0);
-        assert_eq!(target_pct(&c, 200.0), 0.0);
-        assert!((target_pct(&c, 100.0) - 50.0).abs() < 1e-3);
+        let channel = make_channel(vec![[0.0, 50.0], [100.0, 50.0]], Some(150.0), 0.0);
+        assert_eq!(target_pct(&channel, 200.0), 0.0);
+        assert!((target_pct(&channel, 100.0) - 50.0).abs() < 1e-3);
     }
 
     #[test]
     fn extrapolates_to_endpoints() {
-        let c = ch(vec![[10.0, 20.0], [100.0, 80.0]], None, 0.0);
-        assert!((target_pct(&c, 5.0) - 20.0).abs() < 1e-3);
-        assert!((target_pct(&c, 5000.0) - 80.0).abs() < 1e-3);
+        let channel = make_channel(vec![[10.0, 20.0], [100.0, 80.0]], None, 0.0);
+        assert!((target_pct(&channel, 5.0) - 20.0).abs() < 1e-3);
+        assert!((target_pct(&channel, 5000.0) - 80.0).abs() < 1e-3);
     }
 }

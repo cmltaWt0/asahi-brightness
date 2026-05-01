@@ -14,9 +14,14 @@ Wayland compositor that implements `ext-idle-notify-v1`.
 - Maps lux to brightness via per-channel piecewise-linear curves (configurable).
 - **Hard cutoff for keyboard**: above `cutoff_lux` the keyboard backlight is forced to 0.
 - Smooth ramps (~200 ms / 20 steps) so transitions are imperceptible.
-- **Manual override**: any external change to sysfs (waybar slider, `brightnessctl`,
-  `dms ipc call brightness ...`, function keys) pauses the daemon for `override_timeout_s`
-  or until ambient lux drifts more than `override_lux_drift_pct`.
+- **Manual override (per channel)**: an external change to display brightness
+  (waybar slider, `brightnessctl`, `dms ipc call brightness ...`, function keys)
+  pauses **display** auto-control for `override_timeout_s` — keyboard auto-control
+  keeps tracking lux. An external change to keyboard brightness pauses **keyboard**
+  auto-control independently. Each per-channel override exits when its timer
+  expires or when ambient lux drifts more than `override_lux_drift_pct` from the
+  value at override entry. Use `asahi-brightness pause` to pause **both** channels
+  globally (e.g. for presentations).
 - **Idle handoff**: while the compositor reports the seat idle, the daemon stops writing,
   letting `hypridle` / `swayidle` etc. own the screen. After resume there's a small grace
   period so `brightnessctl -r` lands cleanly before normal control resumes.
@@ -36,12 +41,17 @@ your user (`video` group) can write the backlight sysfs files.
 
 ```
 asahi-brightness            # run daemon (default)
-asahi-brightness status     # JSON: lux, current %s, override/idle/pause flags
-asahi-brightness pause [N]  # pause N seconds (0 = until resume)
-asahi-brightness resume
-asahi-brightness nudge ±N   # bias display curve by N % until lux changes
+asahi-brightness status     # JSON: lux, current %s, per-channel override/idle/pause flags
+asahi-brightness pause [N]  # pause BOTH channels for N seconds (0 = until resume)
+asahi-brightness resume     # clear pause and per-channel overrides
+asahi-brightness nudge ±N   # bias display curve by N % until lux changes (display only)
 asahi-brightness dump-config
 ```
+
+`status` returns `display_override_active` and `keyboard_override_active` as
+separate fields. A channel-level override is set automatically when an external
+process writes that channel's sysfs entry; it does not affect the other channel.
+The global `pause` / `resume` commands always cover both channels.
 
 Useful Hyprland keybinds (binds.conf):
 
@@ -94,11 +104,15 @@ useful on OLED to avoid a fully black panel.
 
 ## Coexistence
 
-- **`brightnessctl`** / **`dms`** / waybar sliders: any external write triggers
-  the override pause. Adjust freely; the daemon yields.
+- **`brightnessctl`** / **`dms`** / waybar sliders: an external write to a
+  channel's sysfs entry puts **only that channel** into override. The other
+  channel keeps tracking lux. So `brightnessctl set 50%` only pauses display
+  auto-control; `brightnessctl --device=kbd_backlight set 0` only pauses
+  keyboard auto-control. Adjust freely; the daemon yields per channel.
 - **`hypridle`** / **`swayidle`**: the daemon stops writing when the compositor
   reports idle, so your idle config's `brightnessctl -s set 10` and
-  `brightnessctl -r` work unchanged.
+  `brightnessctl -r` work unchanged. Idle is global (the compositor reports
+  per-seat, not per-device), so both channels pause and resume together.
 
 ## License
 
