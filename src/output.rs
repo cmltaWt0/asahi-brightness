@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
-use std::time::Duration;
 
 use crate::config::Channel;
 
@@ -48,10 +47,19 @@ impl Backlight {
             );
         }
 
+        // Seed last_written with the current value so external-change detection
+        // works from the very first tick. Without this, a daemon that starts
+        // already at the curve target never writes, leaves last_written = None,
+        // and can never notice a manual change (detect_external_change returns
+        // false while last_written is None) — so it neither overrides nor corrects.
+        let last_written = std::fs::read_to_string(&brightness_path)
+            .ok()
+            .and_then(|text| text.trim().parse::<u32>().ok());
+
         Ok(Self {
             max,
             brightness_path,
-            last_written: None,
+            last_written,
         })
     }
 
@@ -87,26 +95,6 @@ impl Backlight {
         std::fs::write(&self.brightness_path, clamped.to_string())
             .with_context(|| format!("writing {}", self.brightness_path.display()))?;
         self.last_written = Some(clamped);
-        Ok(())
-    }
-
-    /// Perform a smooth ramp from current → target_pct over `duration` in `steps` steps.
-    /// Re-reads sysfs at start so external changes don't cause a jump.
-    pub async fn ramp_to(&mut self, target_pct: f32, duration: Duration, steps: u32) -> Result<()> {
-        let from = self.read_raw()?;
-        let to = pct_to_raw(target_pct, self.max);
-        if from == to {
-            self.last_written = Some(to);
-            return Ok(());
-        }
-        let path = crate::ramp::ramp(from, to, steps);
-        let step_dur = duration
-            .checked_div(steps)
-            .unwrap_or(Duration::from_millis(10));
-        for raw_value in path {
-            self.write_raw(raw_value)?;
-            tokio::time::sleep(step_dur).await;
-        }
         Ok(())
     }
 }

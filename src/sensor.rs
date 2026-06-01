@@ -1,7 +1,10 @@
+//! Ambient light sensor: discover the AOP ALS in IIO sysfs and read smoothed lux.
+//!
+//! Reactor model: no background task, no watch channel. The reactor owns a
+//! `Sensor` and calls `sample()` once per sensor-timerfd tick.
+
 use anyhow::{anyhow, Context, Result};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
-use tokio::sync::watch;
 
 const ALS_NAME: &str = "aop-sensors-als";
 const IIO_ROOT: &str = "/sys/bus/iio/devices";
@@ -12,13 +15,18 @@ pub struct Sensor {
     smoothed: Option<f32>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct LuxSample {
+    pub raw: f32,
+    pub smoothed: f32,
+}
+
 impl Sensor {
     pub fn discover() -> Result<PathBuf> {
         let entries = std::fs::read_dir(IIO_ROOT).with_context(|| format!("reading {IIO_ROOT}"))?;
         for entry in entries.flatten() {
             let dir = entry.path();
-            let name_path = dir.join("name");
-            let Ok(name) = std::fs::read_to_string(&name_path) else {
+            let Ok(name) = std::fs::read_to_string(dir.join("name")) else {
                 continue;
             };
             if name.trim() == ALS_NAME {
@@ -48,46 +56,20 @@ impl Sensor {
         Ok(content.trim().parse::<f32>()?)
     }
 
-    fn step(&mut self) -> Result<f32> {
+    /// Read the sensor once and fold it into the exponential moving average,
+    /// returning both the raw reading and the smoothed value.
+    pub fn sample(&mut self) -> Result<LuxSample> {
         let raw = Self::read_raw(&self.lux_path)?;
         let smoothed = match self.smoothed {
             None => raw,
             Some(prev) => self.alpha * raw + (1.0 - self.alpha) * prev,
         };
         self.smoothed = Some(smoothed);
-        Ok(smoothed)
+        Ok(LuxSample { raw, smoothed })
     }
 
-    /// Spawn the polling task; return a watch channel of (raw_lux, smoothed_lux).
-    pub fn spawn(mut self, interval: Duration) -> watch::Receiver<LuxSample> {
-        let (tx, rx) = watch::channel(LuxSample {
-            raw: 0.0,
-            smoothed: 0.0,
-        });
-        tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(interval);
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            loop {
-                ticker.tick().await;
-                match Sensor::read_raw(&self.lux_path) {
-                    Ok(raw) => match self.step() {
-                        Ok(smoothed) => {
-                            let _ = tx.send(LuxSample { raw, smoothed });
-                        }
-                        Err(err) => tracing::warn!(error = %err, "ALS smoothing failed"),
-                    },
-                    Err(err) => {
-                        tracing::warn!(error = %err, "ALS read failed");
-                    }
-                }
-            }
-        });
-        rx
+    /// Last smoothed value, or 0.0 if we haven't sampled yet (for status replies).
+    pub fn last_smoothed(&self) -> f32 {
+        self.smoothed.unwrap_or(0.0)
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct LuxSample {
-    pub raw: f32,
-    pub smoothed: f32,
 }

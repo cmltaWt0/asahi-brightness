@@ -15,7 +15,9 @@ clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "net", "signal", "sync", "time"] }
+# Thin, safe syscall wrappers for the epoll/timerfd/signalfd reactor. Replaced
+# the tokio runtime in Phase 1; mirrors what we'll call directly in the Zig port.
+nix = { version = "0.30", features = ["event", "time", "signal"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 wayland-client = "0.31"
