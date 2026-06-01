@@ -3,14 +3,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
-mod config;
-mod curve;
-mod daemon;
-mod idle;
-mod ipc;
-mod output;
-mod ramp;
-mod sensor;
+use asahi_brightness::{config, ipc, reactor};
 
 #[derive(Parser)]
 #[command(name = "asahi-brightness", version, about)]
@@ -44,8 +37,7 @@ enum Cmd {
     DumpConfig,
 }
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
@@ -57,14 +49,14 @@ async fn main() -> Result<()> {
     let cfg = config::load(cli.config.as_deref()).context("loading config")?;
 
     match cli.cmd.unwrap_or(Cmd::Run) {
-        Cmd::Run => daemon::run(cfg).await,
+        Cmd::Run => reactor::run(cfg),
         Cmd::DumpConfig => {
             println!("{}", toml::to_string_pretty(&cfg)?);
             Ok(())
         }
-        Cmd::Status => ipc::client::status().await,
-        Cmd::Pause { seconds } => ipc::client::pause(seconds).await,
-        Cmd::Resume => ipc::client::resume().await,
-        Cmd::Nudge { delta } => ipc::client::nudge(delta).await,
+        Cmd::Status => ipc::client::status(),
+        Cmd::Pause { seconds } => ipc::client::pause(seconds),
+        Cmd::Resume => ipc::client::resume(),
+        Cmd::Nudge { delta } => ipc::client::nudge(delta),
     }
 }
